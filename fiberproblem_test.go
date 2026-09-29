@@ -14,7 +14,7 @@ import (
 
 	"github.com/gofiber/fiber/v3"
 
-	"github.com/m1chlcz/fiber-problem"
+	fiberproblem "github.com/m1chlcz/fiber-problem"
 )
 
 const testTimeout = 2 * time.Second
@@ -60,6 +60,12 @@ func TestRequestIDReplacesClientHeader(t *testing.T) {
 	}
 }
 
+type problemCase struct {
+	name, method, path string
+	status             int
+	code               string
+}
+
 func TestProblemContractForCommonErrors(t *testing.T) {
 	t.Parallel()
 	var logs bytes.Buffer
@@ -71,44 +77,49 @@ func TestProblemContractForCommonErrors(t *testing.T) {
 	app.Get("/ok", func(c fiber.Ctx) error { return c.SendStatus(fiber.StatusNoContent) })
 	app.Get("/panic", func(fiber.Ctx) error { panic("sensitive panic payload") })
 
-	for _, test := range []struct {
-		name, method, path string
-		status             int
-		code               string
-	}{
+	for _, test := range []problemCase{
 		{name: "not found", method: http.MethodGet, path: "/missing", status: http.StatusNotFound, code: "not_found"},
-		{name: "method not allowed", method: http.MethodPost, path: "/ok", status: http.StatusMethodNotAllowed, code: "method_not_allowed"},
-		{name: "panic", method: http.MethodGet, path: "/panic", status: http.StatusInternalServerError, code: "internal_error"},
+		{
+			name: "method not allowed", method: http.MethodPost, path: "/ok",
+			status: http.StatusMethodNotAllowed, code: "method_not_allowed",
+		},
+		{
+			name: "panic", method: http.MethodGet, path: "/panic",
+			status: http.StatusInternalServerError, code: "internal_error",
+		},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(test.method, test.path, nil)
-			request.Header.Set(fiber.HeaderXRequestID, "attacker-controlled")
-			response := do(t, app, request)
-			defer func() { _ = response.Body.Close() }()
-			if response.StatusCode != test.status {
-				t.Fatalf("status = %d, want %d", response.StatusCode, test.status)
-			}
-			if contentType := response.Header.Get(fiber.HeaderContentType); contentType != "application/problem+json" {
-				t.Fatalf("Content-Type = %q", contentType)
-			}
-			requestID := response.Header.Get(fiber.HeaderXRequestID)
-			item := decodeProblem(t, response)
-			if item.Status != test.status || item.Code != test.code || item.Title == "" || item.Detail == "" {
-				t.Fatalf("problem = %#v", item)
-			}
-			if item.RequestID != requestID || requestID == "attacker-controlled" {
-				t.Fatalf("problem request_id = %q, header = %q", item.RequestID, requestID)
-			}
-			if item.FieldErrors == nil {
-				t.Fatal("field_errors must be an object")
-			}
-			if strings.Contains(item.Detail, "sensitive") || strings.Contains(item.Detail, "panic") {
-				t.Fatalf("problem leaked internal error: %#v", item)
-			}
-		})
+		assertProblemContract(t, app, test)
 	}
 	if strings.Contains(logs.String(), "sensitive panic payload") {
 		t.Fatalf("logs leaked the panic payload: %s", logs.String())
+	}
+}
+
+func assertProblemContract(t *testing.T, app *fiber.App, test problemCase) {
+	t.Helper()
+	request := httptest.NewRequest(test.method, test.path, nil)
+	request.Header.Set(fiber.HeaderXRequestID, "attacker-controlled")
+	response := do(t, app, request)
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != test.status {
+		t.Fatalf("%s status = %d, want %d", test.name, response.StatusCode, test.status)
+	}
+	if contentType := response.Header.Get(fiber.HeaderContentType); contentType != "application/problem+json" {
+		t.Fatalf("%s Content-Type = %q", test.name, contentType)
+	}
+	requestID := response.Header.Get(fiber.HeaderXRequestID)
+	item := decodeProblem(t, response)
+	if item.Status != test.status || item.Code != test.code || item.Title == "" || item.Detail == "" {
+		t.Fatalf("%s problem = %#v", test.name, item)
+	}
+	if item.RequestID != requestID || requestID == "attacker-controlled" {
+		t.Fatalf("%s problem request_id = %q, header = %q", test.name, item.RequestID, requestID)
+	}
+	if item.FieldErrors == nil {
+		t.Fatalf("%s field_errors must be an object", test.name)
+	}
+	if strings.Contains(item.Detail, "sensitive") || strings.Contains(item.Detail, "panic") {
+		t.Fatalf("%s problem leaked internal error: %#v", test.name, item)
 	}
 }
 
