@@ -17,10 +17,10 @@ import (
 	fiberrecover "github.com/gofiber/fiber/v3/middleware/recover"
 )
 
-// DefaultTimeout bounds a handler when Timeout receives a value below one.
+// DefaultTimeout bounds a handler when Timeout receives a value of zero or less.
 const DefaultTimeout = 30 * time.Second
 
-// ErrPanic is returned after Recovery catches a panic.
+// ErrPanic is the error that Recovery returns after it catches a panic.
 var ErrPanic = errors.New("recovered panic")
 
 // Problem is an RFC 7807 response body with a stable code and a request ID.
@@ -71,8 +71,8 @@ func Recovery(logger *slog.Logger) fiber.Handler {
 }
 
 // AccessLog returns a middleware that writes one structured log line for each
-// request that completes. Recovery reports a panic instead. A request under a
-// sensitive prefix receives no-store.
+// request that completes. Recovery reports a panic instead. A request that
+// matches a sensitive prefix receives no-store.
 func AccessLog(logger *slog.Logger, sensitivePrefixes []string) fiber.Handler {
 	observed := loggerOrDiscard(logger)
 	return func(c fiber.Ctx) error {
@@ -96,7 +96,7 @@ func AccessLog(logger *slog.Logger, sensitivePrefixes []string) fiber.Handler {
 	}
 }
 
-// BodyLimit returns a middleware that rejects a body above limit bytes. A
+// BodyLimit returns a middleware that rejects a body larger than limit bytes. A
 // non-nil allow function exempts a request.
 func BodyLimit(limit int, allow func(fiber.Ctx) bool) fiber.Handler {
 	return func(c fiber.Ctx) error {
