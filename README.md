@@ -5,6 +5,8 @@ RFC 7807 problem responses and safe request middleware for Fiber v3.
 ## Features
 
 - An error handler that writes `application/problem+json`.
+- Validation error aggregation through `FieldErrors` and `MergeFieldErrors`.
+- An OpenAPI schema snippet for the problem body.
 - Secure request IDs. The middleware removes a client header and sets a random 128-bit ID.
 - Panic recovery with a sanitized log entry.
 - Structured access logs with the request ID, method, route, status, and duration.
@@ -36,6 +38,23 @@ return fiberproblem.WriteFields(c, fiber.StatusUnprocessableEntity,
 	map[string]string{"email": "required"})
 ```
 
+## Validation errors
+
+Return a `FieldErrors` value to reject a request with 422 Unprocessable Entity:
+
+```go
+return fiberproblem.FieldErrors{"email": "required", "phone": "invalid"}
+```
+
+`FromError` maps the value to `validation_failed`, sets `field_errors`, and
+uses a deterministic detail: `invalid fields: email, phone`. A wrapped error
+matches too. Use `MergeFieldErrors` to combine several sources; a later value
+wins for the same field:
+
+```go
+return fiberproblem.MergeFieldErrors(formErrors, domainErrors)
+```
+
 ## Problem fields
 
 | Field | Meaning |
@@ -50,6 +69,24 @@ return fiberproblem.WriteFields(c, fiber.StatusUnprocessableEntity,
 ## Codes
 
 `unauthorized`, `forbidden`, `conflict`, `validation_failed`, `rate_limited`, `invalid_request`, `not_found`, `method_not_allowed`, `request_timeout`, `payload_too_large`, `unsupported_media_type`, `service_unavailable`, `internal_error`.
+
+## OpenAPI
+
+`schema/problem.openapi.yaml` carries the schema of the problem body. Copy the
+file next to your specification and reference the schema:
+
+```yaml
+responses:
+  '422':
+    description: Validation failed
+    content:
+      application/problem+json:
+        schema:
+          $ref: './schema/problem.openapi.yaml#/components/schemas/Problem'
+```
+
+You can also copy the `Problem` schema under `components/schemas` in your own
+specification and use `$ref: '#/components/schemas/Problem'`.
 
 ## Notes
 

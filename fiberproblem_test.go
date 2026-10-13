@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -148,6 +150,76 @@ func TestFromErrorMapsFiberStatuses(t *testing.T) {
 		if item.Status != test.status || item.Code != test.code || item.Title == "" || item.Detail == "" {
 			t.Fatalf("FromError(%v) = %#v", test.err, item)
 		}
+	}
+}
+
+func TestFieldErrorsMessageSortsFields(t *testing.T) {
+	t.Parallel()
+	var fieldError error = fiberproblem.FieldErrors{"phone": "required", "email": "invalid"}
+	if got := fieldError.Error(); got != "invalid fields: email, phone" {
+		t.Fatalf("Error() = %q", got)
+	}
+	if got := (fiberproblem.FieldErrors{}).Error(); got != "invalid fields" {
+		t.Fatalf("empty Error() = %q", got)
+	}
+}
+
+func TestMergeFieldErrorsLaterValuesWin(t *testing.T) {
+	t.Parallel()
+	first := fiberproblem.FieldErrors{"email": "required", "phone": "required"}
+	second := fiberproblem.FieldErrors{"phone": "invalid"}
+	merged := fiberproblem.MergeFieldErrors(first, second)
+	want := fiberproblem.FieldErrors{"email": "required", "phone": "invalid"}
+	if !maps.Equal(merged, want) {
+		t.Fatalf("MergeFieldErrors = %#v, want %#v", merged, want)
+	}
+	if !maps.Equal(first, fiberproblem.FieldErrors{"email": "required", "phone": "required"}) {
+		t.Fatalf("MergeFieldErrors modified a source: %#v", first)
+	}
+	if fiberproblem.MergeFieldErrors() == nil {
+		t.Fatal("MergeFieldErrors() = nil, want an empty map")
+	}
+}
+
+func TestFromErrorMapsFieldErrors(t *testing.T) {
+	t.Parallel()
+	item := fiberproblem.FromError(fiberproblem.FieldErrors{"phone": "too short", "email": "required"})
+	if item.Status != fiber.StatusUnprocessableEntity || item.Code != "validation_failed" || item.Title == "" {
+		t.Fatalf("FromError = %#v", item)
+	}
+	if item.Detail != "invalid fields: email, phone" {
+		t.Fatalf("detail = %q", item.Detail)
+	}
+	if item.FieldErrors["email"] != "required" || item.FieldErrors["phone"] != "too short" {
+		t.Fatalf("field_errors = %#v", item.FieldErrors)
+	}
+	wrapped := fmt.Errorf("register: %w", fiberproblem.FieldErrors{"email": "required"})
+	wrappedItem := fiberproblem.FromError(wrapped)
+	if wrappedItem.Status != fiber.StatusUnprocessableEntity || wrappedItem.FieldErrors["email"] != "required" {
+		t.Fatalf("FromError(wrapped) = %#v", wrappedItem)
+	}
+}
+
+func TestErrorHandlerWritesFieldErrors(t *testing.T) {
+	t.Parallel()
+	app := fiber.New(fiber.Config{ErrorHandler: fiberproblem.ErrorHandler})
+	app.Use(fiberproblem.RequestID())
+	app.Post("/register", func(fiber.Ctx) error {
+		return fiberproblem.FieldErrors{"email": "required", "phone": "invalid"}
+	})
+	response := do(t, app, httptest.NewRequest(http.MethodPost, "/register", nil))
+	if response.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d", response.StatusCode, http.StatusUnprocessableEntity)
+	}
+	item := decodeProblem(t, response)
+	if item.Code != "validation_failed" || item.Detail != "invalid fields: email, phone" {
+		t.Fatalf("problem = %#v", item)
+	}
+	if item.FieldErrors["email"] != "required" || item.FieldErrors["phone"] != "invalid" {
+		t.Fatalf("field_errors = %#v", item.FieldErrors)
+	}
+	if item.RequestID == "" {
+		t.Fatal("problem request_id is empty")
 	}
 }
 

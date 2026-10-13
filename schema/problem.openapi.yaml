@@ -1,0 +1,41 @@
+components:
+  schemas:
+    Problem:
+      type: object
+      description: An RFC 7807 application/problem+json response body.
+      required:
+        - status
+        - code
+        - title
+        - detail
+        - field_errors
+        - request_id
+      additionalProperties: false
+      properties:
+        status:
+          type: integer
+          description: The HTTP status code.
+          example: 422
+        code:
+          type: string
+          description: A stable code such as not_found or internal_error.
+          example: validation_failed
+        title:
+          type: string
+          description: A short label.
+          example: Validation failed
+        detail:
+          type: string
+          description: A safe detail. Internal errors become a generic text.
+          example: One or more request fields are invalid.
+        field_errors:
+          type: object
+          description: A map of field to message. Never null.
+          additionalProperties:
+            type: string
+          example:
+            email: required
+        request_id:
+          type: string
+          description: The request ID from the response.
+          example: 4d7c0f3f72a94f0b8f2f6ac1e0f5b8d2

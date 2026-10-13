@@ -9,7 +9,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"maps"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,6 +33,33 @@ type Problem struct {
 	Detail      string            `json:"detail"`
 	FieldErrors map[string]string `json:"field_errors"`
 	RequestID   string            `json:"request_id"`
+}
+
+// FieldErrors maps a field to its validation message. It implements error, so
+// a handler can return it directly.
+type FieldErrors map[string]string
+
+// Error lists the invalid fields in sorted order.
+func (fieldErrors FieldErrors) Error() string {
+	if len(fieldErrors) == 0 {
+		return "invalid fields"
+	}
+	fields := make([]string, 0, len(fieldErrors))
+	for field := range fieldErrors {
+		fields = append(fields, field)
+	}
+	slices.Sort(fields)
+	return "invalid fields: " + strings.Join(fields, ", ")
+}
+
+// MergeFieldErrors combines field error sources into a new map. A later value
+// wins for the same field. The sources are not modified.
+func MergeFieldErrors(sources ...FieldErrors) FieldErrors {
+	merged := FieldErrors{}
+	for _, source := range sources {
+		maps.Copy(merged, source)
+	}
+	return merged
 }
 
 type requestIDKey struct{}
@@ -159,9 +188,20 @@ func WriteFields(c fiber.Ctx, status int, code, title, detail string, fieldError
 	}, "application/problem+json")
 }
 
-// FromError maps an error to a safe public problem. Unknown errors become a
+// FromError maps an error to a safe public problem. A FieldErrors error maps
+// to 422 Unprocessable Entity with field_errors set. Unknown errors become a
 // generic internal error.
 func FromError(err error) Problem {
+	var fieldErrors FieldErrors
+	if errors.As(err, &fieldErrors) {
+		return Problem{
+			Status:      fiber.StatusUnprocessableEntity,
+			Code:        "validation_failed",
+			Title:       "Validation failed",
+			Detail:      fieldErrors.Error(),
+			FieldErrors: fieldErrors,
+		}
+	}
 	status := fiber.StatusInternalServerError
 	if fiberError, ok := errors.AsType[*fiber.Error](err); ok {
 		status = fiberError.Code
